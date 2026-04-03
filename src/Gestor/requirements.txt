@@ -1,0 +1,6 @@
+langchain==1.2.15
+langchain-openai==1.1.12
+python-dotenv==1.2.2
+pandas==3.0.2
+openpyxl==3.1.5
+PyPDF2==3.0.1
