@@ -20,7 +20,7 @@ Em organizações com processos manuais, a revisão salarial sofre com:
 
 ## Solução Proposta
 
-Uma aplicação baseada em IA Agentica que atua como um Auditor de Performance. O sistema utiliza ferramentas específicas para acessar diferentes fontes de dados e aplicar lógica matemática rigorosa, eliminando a subjetividade e o erro humano no processamento inicial das informações.
+Uma aplicação baseada em IA Agêntica com LangGraph, que atua como um Auditor de Performance. O diferencial reside no fluxo Human-In-The-Loop (HIL): a IA processa os dados brutos, mas o gestor de RH atua como o 'validador final', podendo aprovar ou solicitar o reprocessamento imediato caso identifique inconsistências.
 
 ## KPIs de Sucesso
 
@@ -54,19 +54,21 @@ A solução foi construída utilizando os seguintes pilares e ferramentas:
 
     - Interpretador Python 3.12: Escolhido para suporte às versões mais recentes das bibliotecas de IA e melhor gerenciamento de tipos.
 
-    - ChatOpenAI (gpt-4o-mini): Configurado com temperature 0.1 para garantir que a saída seja determinística e matemática, evitando alucinações em cálculos de datas e médias.
+    - ChatOpenAI (gpt-4o-mini): Configurado com temperature baixa para garantir que a saída seja determinística e matemática, evitando alucinações em cálculos de datas e médias.
 
     - SQLite (ERP Simulado): Banco de dados local para persistência do histórico financeiro, permitindo consultas SQL reais de forma portátil.
 
-    - Pandas com Float Format: Leitura e formatação rigorosa de informações para garantir que o LLM receba dados mais precisos.
+    - Pandas: Leitura e formatação rigorosa de informações para garantir que o LLM receba dados mais precisos.
 
-    - LangChain Agents: Estrutura que permite ao modelo decidir dinamicamente qual ferramenta consultar com base na necessidade da pergunta.
+    - LangGraph (Orquestração de Fluxo): Orquestração do fluxo de trabalho em nós especializados, garantindo que o bônus seja identificado antes da análise de mérito, mantendo um estado persistente e controlado.
 
     - RAG (Retrieval-Augmented Generation): Aplicado para a leitura da Política de Remuneração em PDF. Em vez de treinar um modelo com as regras da empresa, o agente recupera o contexto relevante do documento em tempo real, garantindo que a resposta esteja sempre fundamentada na norma vigente.
 
-    - Tool Use (Agentes): O modelo não apenas gera texto, mas executa ações. Foram desenvolvidas ferramentas customizadas para consulta de bancos de dados SQL e manipulação de DataFrames, permitindo que a IA interaja com o ecossistema de dados da empresa de forma estruturada.
+    - Human-In-The-Loop (HIL): Checkpoints de interrupção nativos que transformam o gestor de RH em um aprovador mandatório (Decisor), aumentando a segurança jurídica do processo.
 
-    - Cadeia de Pensamento (Chain-of-Thought): O prompt foi desenhado para forçar o modelo a decompor o problema (Cálculo de data > Comparação de nota > Validação de bônus) antes de emitir o veredito final.
+    - Persistência de Memória (Checkpointer): Uso de MemorySaver para manter o estado da análise, permitindo que o sistema 'lembre' de decisões anteriores e suporte reprocessamentos sem perda de contexto dentro da mesma sessão.
+
+    - Observabilidade e Auditoria (Logger): Implementação de um sistema de logging silencioso via decoradores Python. Erros técnicos e rastreios de execução são desviados para o arquivo log, mantendo a interface do usuário limpa e focada na tomada de decisão.
 
 ## Trade-offs
 
@@ -82,6 +84,14 @@ Após a validação da hipótese inicial, o projeto prevê as seguintes evoluç�
 
 Substituição da interface de linha de comando (CLI) por um Dashboard Administrativo (utilizando Streamlit ou React). O objetivo é permitir que o gestor de RH visualize o "Caminho do Pensamento" da IA de forma gráfica, facilitando auditorias rápidas.
 
+### Recuperação Avançada (Vector RAG)
+
+Para empresas com políticas complexas (múltiplos PDFs por país ou cargo), o recomendado é implementaremos um Vector Database, com isso garantindo melhor performance e processamento na leitura dos dados.
+
+### Gestão de Contexto (Escalabilidade)
+
+Para suportar o crescimento do volume de dados é necessário adaptar as condições atuais da gestão de contexto para ambientes de alto processamento.
+
 ### Conectividade e Padrão MCP (Model Context Protocol)
 
 Para escalar a solução em ambientes corporativos complexos, a arquitetura evoluirá para o padrão MCP. Isso permitirá:
@@ -93,6 +103,14 @@ Para escalar a solução em ambientes corporativos complexos, a arquitetura evol
     - Maior segurança na camada de transporte de dados entre o ERP oficial e o modelo de linguagem.
 
 ## Como Executar
+
+### Arquivos de Apoio (Documentação de Teste)
+
+Na raiz do projeto, a pasta files/ contém modelos de exemplo para facilitar o teste inicial:
+
+    - politica.pdf: Contém as regras de bônus de inovação e nota de corte.
+
+    - avaliações.xlsx: Planilha com dados de teste de funcionários (incluindo casos de sucesso e exclusão).
 
 ### Configuração de Ambiente
 
