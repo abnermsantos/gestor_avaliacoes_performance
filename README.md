@@ -84,10 +84,6 @@ Após a validação da hipótese inicial, o projeto prevê as seguintes evoluç�
 
 Substituição da interface de linha de comando (CLI) por um Dashboard Administrativo (utilizando Streamlit ou React). O objetivo é permitir que o gestor de RH visualize o "Caminho do Pensamento" da IA de forma gráfica, facilitando auditorias rápidas.
 
-### Recuperação Avançada (Vector RAG)
-
-Para empresas com políticas complexas (múltiplos PDFs por país ou cargo), o recomendado é implementaremos um Vector Database, com isso garantindo melhor performance e processamento na leitura dos dados.
-
 ### Gestão de Contexto (Escalabilidade)
 
 Para suportar o crescimento do volume de dados é necessário adaptar as condições atuais da gestão de contexto para ambientes de alto processamento.

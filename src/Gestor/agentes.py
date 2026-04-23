@@ -11,6 +11,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_chroma import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from utils import monitorar_processo
 
@@ -38,14 +41,33 @@ def extrair_planilha() -> str:
         return f"Erro planilha: {e}"
 
 @monitorar_processo
-def extrair_pdf() -> str:
-    caminho = os.getenv("CAMINHO_POLITICA")
+def inicializar_conhecimento():
+    """Carrega o PDF na VectorStore usando os Embeddings do HuggingFace"""
     try:
+        caminho = os.getenv("CAMINHO_POLITICA")
         reader = PdfReader(caminho)
-        return "\n".join([p.extract_text() for p in reader.pages])
-    except Exception as e:
-        return f"Erro PDF: {e}"
+        texto_completo = "\n".join([p.extract_text() for p in reader.pages])
 
+        # Chunking: divide o PDF em partes menores
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
+        docs = text_splitter.create_documents([texto_completo])
+
+        # Modelo Multilíngue do HuggingFace
+        model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        embeddings = HuggingFaceEmbeddings(model_name=model_name)
+
+        # Cria o banco vetorial Chroma em memória
+        vectorstore = Chroma.from_documents(
+            documents=docs, 
+            embedding=embeddings,
+            collection_name="politica_rh"
+        )
+
+        return vectorstore
+    except Exception as e:
+        print(f"Erro crítico na inicialização: {e}")
+        return None
+    
 @monitorar_processo
 def consultar_historico_erp(nome_funcionario: str) -> str:
     """Consulta o banco de dados e retorna o status de tempo."""
@@ -86,7 +108,11 @@ def no_identificar_bonus(state: AgentState):
     """Analisa quem merece bônus de inovação com base na política e notas."""
     
     planilha = extrair_planilha()
-    politica = extrair_pdf()
+    
+    # RAG: Busca apenas o que diz respeito a BÔNUS no PDF
+    vectorstore = inicializar_conhecimento()
+    docs = vectorstore.similarity_search("Critérios e regras para concessão de bônus de inovação", k=3)
+    contexto_politica = "\n\n".join([d.page_content for d in docs])
     
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
@@ -94,7 +120,7 @@ def no_identificar_bonus(state: AgentState):
     Você é um Analista de Recompensas. Sua tarefa é IDENTIFICAR APENAS quem deve receber o BÔNUS DE INOVAÇÃO.
     
     REGRAS DA POLÍTICA:
-    {politica}
+    {contexto_politica}
     
     DADOS DOS FUNCIONÁRIOS:
     {planilha}
@@ -108,7 +134,7 @@ def no_identificar_bonus(state: AgentState):
     resposta = llm.invoke([SystemMessage(content=prompt)])
     return {
         "planilha_dados": planilha, 
-        "politica_regras": politica,
+        "politica_regras": contexto_politica,
         "lista_bonus_inovacao": resposta.content
     }
 
@@ -137,6 +163,11 @@ def no_analista_merito(state: AgentState):
     
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
+    # RAG: Busca apenas as regras de AUMENTO SALARIAL e MÉRITO
+    vectorstore = inicializar_conhecimento()
+    docs = vectorstore.similarity_search("Critérios para aumento salarial e notas de performance", k=3)
+    contexto_merito = "\n\n".join([d.page_content for d in docs])
+    
     # Filtramos a planilha para mostrar ao LLM apenas quem passou no tempo (Nó 2)
     # Isso evita que o LLM "tente" dar aumento para quem está inatp por data.
     aptos_nomes = ", ".join(state["funcionarios_aptos"])
@@ -145,7 +176,7 @@ def no_analista_merito(state: AgentState):
     Você é um Especialista em Remuneração. Sua tarefa é criar uma LISTA DE APTOS AO AUMENTO SALARIAL.
     
     REGRAS DA POLÍTICA (Extraia a nota de corte aqui):
-    {state['politica_regras']}
+    {contexto_merito}
     
     DADOS DE PERFORMANCE (Use as notas reais sem aproximação):
     {state['planilha_dados']}
