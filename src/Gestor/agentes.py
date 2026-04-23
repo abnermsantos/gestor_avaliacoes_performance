@@ -14,6 +14,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 
 from utils import monitorar_processo
 
@@ -116,26 +118,31 @@ def no_identificar_bonus(state: AgentState):
     
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
-    prompt = f"""
-    Você é um Analista de Recompensas. Sua tarefa é IDENTIFICAR APENAS quem deve receber o BÔNUS DE INOVAÇÃO.
-    
-    REGRAS DA POLÍTICA:
-    {contexto_politica}
-    
-    DADOS DOS FUNCIONÁRIOS:
-    {planilha}
-    
-    INSTRUÇÃO:
-    1. Localize na política os critérios para "Bônus".
-    2. Ignore critérios de aumento salarial ou tempo de empresa.
-    3. Liste os funcionários que atendem a esses critérios específicos.
-    """
-    
-    resposta = llm.invoke([SystemMessage(content=prompt)])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", """Você é um Analista de Recompensas. Sua tarefa é IDENTIFICAR APENAS quem deve receber o BÔNUS DE INOVAÇÃO.
+                        REGRAS DA POLÍTICA:
+                        {contexto_politica}
+                        
+                        DADOS DOS FUNCIONÁRIOS:
+                        {planilha}
+                        
+                        INSTRUÇÃO:
+                        1. Localize na política os critérios para "Bônus".
+                        2. Ignore critérios de aumento salarial ou tempo de empresa.
+                        3. Liste os funcionários que atendem a esses critérios específicos."""),
+            ("human", "{query}")
+        ]
+    )
+
+    pergunta = "Quem merece bônus por inovação?"
+    cadeia = prompt | llm | StrOutputParser()
+
+    resposta = cadeia.invoke({"query": pergunta, "planilha": planilha, "contexto_politica": contexto_politica})
     return {
         "planilha_dados": planilha, 
         "politica_regras": contexto_politica,
-        "lista_bonus_inovacao": resposta.content
+        "lista_bonus_inovacao": resposta
     }
 
 # --- NÓ 2: FILTRO DE COMPLIANCE ---
@@ -172,32 +179,44 @@ def no_analista_merito(state: AgentState):
     # Isso evita que o LLM "tente" dar aumento para quem está inatp por data.
     aptos_nomes = ", ".join(state["funcionarios_aptos"])
     
-    prompt = f"""
-    Você é um Especialista em Remuneração. Sua tarefa é criar uma LISTA DE APTOS AO AUMENTO SALARIAL.
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", """Você é um Especialista em Remuneração. Sua tarefa é criar uma LISTA DE APTOS AO AUMENTO SALARIAL.
+                        REGRAS DA POLÍTICA (Extraia a nota de corte aqui):
+                        {contexto_merito}
+                        
+                        DADOS DE PERFORMANCE (Use as notas reais sem aproximação):
+                        {planilha_dados}
+                        
+                        FUNCIONÁRIOS ELEGÍVEIS (Apenas estes podem receber aumento):
+                        {aptos_nomes}
+                        
+                        INSTRUÇÕES:
+                        1. A partir da lista de FUNCIONÁRIOS ELEGÍVEIS (aptos_nomes), liste APENAS o nome e a Média Final de quem 
+                        atingiu ou superou o critério da politica_regras.
+                        2. Use precisão de 3 casas decimais e NÃO aplique arredondamentos e truncamentos 
+                        (Por exemplo: 4.499 NÃO é 4.500). 
+                        3. Se ninguém atingir o critério, retorne "Nenhum funcionário elegível para aumento neste ciclo".
+                        4. NÃO mencione exclusões, inaptos ou justificativas de quem ficou de fora.
+                        5. Formate como uma lista limpa: "Nome - Média: X.XXX"
+                        """
+            ),
+            ("human", "{query}")
+        ]
+    ) 
     
-    REGRAS DA POLÍTICA (Extraia a nota de corte aqui):
-    {contexto_merito}
-    
-    DADOS DE PERFORMANCE (Use as notas reais sem aproximação):
-    {state['planilha_dados']}
-    
-    FUNCIONÁRIOS ELEGÍVEIS (Apenas estes podem receber aumento):
-    [{aptos_nomes}]
-    
-    INSTRUÇÕES:
-    1. A partir da lista de FUNCIONÁRIOS ELEGÍVEIS (aptos_nomes), liste APENAS o nome e a Média Final de quem 
-    atingiu ou superou o critério da politica_regras.
-    2. Use precisão de 3 casas decimais e NÃO aplique arredondamentos e truncamentos 
-    (Por exemplo: 4.499 NÃO é 4.500). 
-    3. Se ninguém atingir o critério, retorne "Nenhum funcionário elegível para aumento neste ciclo".
-    4. NÃO mencione exclusões, inaptos ou justificativas de quem ficou de fora.
-    5. Formate como uma lista limpa: "Nome - Média: X.XXX"
-    """
-    
-    resposta = llm.invoke([SystemMessage(content=prompt)])
-    return {
-        "resultado_final": resposta.content.strip()
-    }
+    pergunta = "Quem merece aumento salarial por performance?"
+    cadeia = prompt | llm | StrOutputParser()
+
+    resposta = cadeia.invoke(
+        {
+            "query": pergunta, 
+            "aptos_nomes": aptos_nomes, 
+            "contexto_merito": contexto_merito, 
+            "planilha_dados": state["planilha_dados"]
+        }
+    )
+    return {"resultado_final": resposta}
 
 # --- CONFIGURAÇÃO DO GRAFO ---
 def cria_grafo_avaliacoes():
