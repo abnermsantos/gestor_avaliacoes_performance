@@ -16,6 +16,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 
 from utils import monitorar_processo
 
@@ -110,14 +111,11 @@ def no_identificar_bonus(state: AgentState):
     """Analisa quem merece bônus de inovação com base na política e notas."""
     
     planilha = extrair_planilha()
-    
-    # RAG: Busca apenas o que diz respeito a BÔNUS no PDF
     vectorstore = inicializar_conhecimento()
-    docs = vectorstore.similarity_search("Critérios e regras para concessão de bônus de inovação", k=3)
-    contexto_politica = "\n\n".join([d.page_content for d in docs])
-    
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
+    format_docs = lambda docs: "\n\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", """Você é um Analista de Recompensas. Sua tarefa é IDENTIFICAR APENAS quem deve receber o BÔNUS DE INOVAÇÃO.
@@ -129,19 +127,26 @@ def no_identificar_bonus(state: AgentState):
                         
                         INSTRUÇÃO:
                         1. Localize na política os critérios para "Bônus".
-                        2. Ignore critérios de aumento salarial ou tempo de empresa.
-                        3. Liste os funcionários que atendem a esses critérios específicos."""),
+                        2. Liste os funcionários que atendem a esses critérios específicos."""),
             ("human", "{query}")
         ]
     )
 
     pergunta = "Quem merece bônus por inovação?"
-    cadeia = prompt | llm | StrOutputParser()
+    cadeia = (
+        {
+            "query": RunnablePassthrough(),
+            "contexto_politica": RunnablePassthrough() | retriever | format_docs,
+            "planilha": lambda x: planilha
+        } 
+        | prompt 
+        | llm 
+        | StrOutputParser() 
+    )
 
-    resposta = cadeia.invoke({"query": pergunta, "planilha": planilha, "contexto_politica": contexto_politica})
+    resposta = cadeia.invoke(pergunta)
     return {
         "planilha_dados": planilha, 
-        "politica_regras": contexto_politica,
         "lista_bonus_inovacao": resposta
     }
 
@@ -158,9 +163,12 @@ def no_filtro_compliance(state: AgentState):
         status = consultar_historico_erp(nome)
         if status == "APTO":
             funcionarios_aptos.append(nome)
+    
+    df_filtrado = df[df['Nome'].isin(funcionarios_aptos)]
+    planilha_somente_aptos = df_filtrado.to_string(index=False, float_format='{:.3f}'.format)
 
     return {
-        "funcionarios_aptos": funcionarios_aptos
+        "planilha_dados": planilha_somente_aptos
     }
 
 # --- NÓ 3: ANALISTA DE MÉRITO ---
@@ -169,16 +177,10 @@ def no_analista_merito(state: AgentState):
     """Aplica os critérios exatos de nota do PDF apenas nos funcionários aprovados pelo compliance."""
     
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    
-    # RAG: Busca apenas as regras de AUMENTO SALARIAL e MÉRITO
     vectorstore = inicializar_conhecimento()
-    docs = vectorstore.similarity_search("Critérios para aumento salarial e notas de performance", k=3)
-    contexto_merito = "\n\n".join([d.page_content for d in docs])
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
-    # Filtramos a planilha para mostrar ao LLM apenas quem passou no tempo (Nó 2)
-    # Isso evita que o LLM "tente" dar aumento para quem está inatp por data.
-    aptos_nomes = ", ".join(state["funcionarios_aptos"])
-    
+    format_docs = lambda docs: "\n\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", """Você é um Especialista em Remuneração. Sua tarefa é criar uma LISTA DE APTOS AO AUMENTO SALARIAL.
@@ -188,12 +190,8 @@ def no_analista_merito(state: AgentState):
                         DADOS DE PERFORMANCE (Use as notas reais sem aproximação):
                         {planilha_dados}
                         
-                        FUNCIONÁRIOS ELEGÍVEIS (Apenas estes podem receber aumento):
-                        {aptos_nomes}
-                        
                         INSTRUÇÕES:
-                        1. A partir da lista de FUNCIONÁRIOS ELEGÍVEIS (aptos_nomes), liste APENAS o nome e a Média Final de quem 
-                        atingiu ou superou o critério da politica_regras.
+                        1. Liste APENAS o nome e a Média Final de quem atingiu ou superou o critério da politica_regras.
                         2. Use precisão de 3 casas decimais e NÃO aplique arredondamentos e truncamentos 
                         (Por exemplo: 4.499 NÃO é 4.500). 
                         3. Se ninguém atingir o critério, retorne "Nenhum funcionário elegível para aumento neste ciclo".
@@ -206,16 +204,18 @@ def no_analista_merito(state: AgentState):
     ) 
     
     pergunta = "Quem merece aumento salarial por performance?"
-    cadeia = prompt | llm | StrOutputParser()
-
-    resposta = cadeia.invoke(
+    cadeia = (
         {
-            "query": pergunta, 
-            "aptos_nomes": aptos_nomes, 
-            "contexto_merito": contexto_merito, 
-            "planilha_dados": state["planilha_dados"]
-        }
+            "query": RunnablePassthrough(),
+            "contexto_merito": RunnablePassthrough() | retriever | format_docs,
+            "planilha_dados": lambda x: state["planilha_dados"]
+        } 
+        | prompt 
+        | llm 
+        | StrOutputParser() 
     )
+
+    resposta = cadeia.invoke(pergunta)
     return {"resultado_final": resposta}
 
 # --- CONFIGURAÇÃO DO GRAFO ---
