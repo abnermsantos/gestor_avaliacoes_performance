@@ -1,4 +1,5 @@
 import logging
+import re
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -31,6 +32,13 @@ class NosAvaliacoes:
         self._planilha = planilha_service
         self._erp = erp_service
         self._format_docs = lambda docs: "\n\n".join(d.page_content for d in docs)
+
+    def _parse_tempo_minimo(self, resposta: str) -> int:
+        """Extrai o primeiro número inteiro da resposta do LLM."""
+        
+        resposta = resposta.strip()
+        match = re.search(r'\d+', resposta)
+        return int(match.group()) if match else 0
 
     # -----------------------------------------------------------------------
     # NÓ 1 — Identificador de Bônus
@@ -80,13 +88,56 @@ class NosAvaliacoes:
 
     @monitorar_processo
     def filtro_compliance(self, state: AgentState) -> dict:
-        """Filtra funcionários inaptos por tempo via consulta ao ERP."""
-        
+        """Filtra funcionários inaptos por tempo (definido na política) via consulta ao ERP."""
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """Você é um Analista de Compliance especialista em interpretar políticas de RH.
+                Sua tarefa é extrair o critério de tempo mínimo entre aumentos salariais e retorná-lo em meses.
+
+                REGRAS DA POLÍTICA:
+                {contexto_politica}
+
+                REGRAS DE CONVERSÃO OBRIGATÓRIAS:
+                - "1 ano" ou "um ano" ou "no último ano" → 12
+                - "2 anos" ou "dois anos" → 24
+                - "6 meses" ou "seis meses" → 6
+                - "1 ano e meio" ou "18 meses" → 18
+                - Qualquer variação textual de tempo DEVE ser convertida para o número inteiro de meses.
+                - Se não houver critério de tempo definido → 0
+
+                INSTRUÇÕES:
+                1. Localize na política o critério de tempo entre aumentos salariais.
+                2. Converta o tempo encontrado para meses usando as regras acima.
+                3. Retorne SOMENTE o número inteiro, sem texto, sem unidade, sem pontuação.
+                
+                EXEMPLOS DE SAÍDA ESPERADA:
+                Política diz "12 meses"           → 12
+                Política diz "1 ano"              → 12
+                Política diz "no último ano"      → 12
+                Política diz "a cada dois anos"   → 24
+                Política diz "semestralmente"     → 6
+                Política não menciona tempo       → 0"""),
+            ("human", "{query}"),
+        ])
+
+        cadeia = (
+            {
+                "query": RunnablePassthrough(),
+                "contexto_politica": RunnablePassthrough() | self._retriever | self._format_docs,
+            }
+            | prompt
+            | self._llm
+            | StrOutputParser()
+        )
+
+        resposta = cadeia.invoke("Qual o tempo mínimo para um funcionário ser elegível a um novo aumento salarial?")
+        tempo_minimo = self._parse_tempo_minimo(resposta)
+
         df = self._planilha.de_string(state["planilha_dados"])
 
         aptos = [
             nome for nome in df["Nome"]
-            if self._erp.verificar_elegibilidade(nome) == "APTO"
+            if self._erp.verificar_elegibilidade(nome, tempo_minimo) == "APTO"
         ]
 
         df_filtrado = df[df["Nome"].isin(aptos)]

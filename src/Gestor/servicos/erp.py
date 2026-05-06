@@ -16,8 +16,7 @@ class ErpService:
         self._db_path = os.path.join(base_dir, "..", "db", "erp_simulado.db")
 
     @monitorar_processo
-    ###!!! AQUI AINDA PRECISAMOS AJUSTAR OS 12 MESES
-    def verificar_elegibilidade(self, nome_funcionario: str) -> str:
+    def verificar_elegibilidade(self, nome_funcionario: str, tempo_minimo: int) -> str:
         """
         Verifica se o funcionário está apto a receber aumento.
         Retorna 'APTO' ou 'INAPTO (Aumento há X meses)'.
@@ -44,7 +43,7 @@ class ErpService:
                 (hoje.year - data_evento.year) * 12
                 + (hoje.month - data_evento.month)
             )
-            if meses <= 12:
+            if meses <= tempo_minimo:
                 return f"INAPTO (Aumento há {meses} meses)"
 
         return "APTO"
